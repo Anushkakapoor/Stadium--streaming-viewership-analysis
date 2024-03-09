@@ -1,0 +1,329 @@
+Packages
+```{r, echo=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(gam)
+library(data.table)
+library(forecast)
+library(caret)
+library(neuralnet)
+library(gains)
+library(prophet)
+```
+
+Data
+```{r}
+Samsung <- readxl::read_xlsx("~/Downloads/Samsung_6_Month_Data.xlsx", sheet = 1)
+
+df_samsung <- Samsung %>% filter(Streamer == "Samsung")
+df_samsung_hub <- Samsung %>% filter(Streamer == "Samsung-hub")
+df_samsung_mobile <- Samsung %>% filter(Streamer == "Samsung-mobile")
+df_samsung_web <- Samsung %>% filter(Streamer == "Samsung-web")
+
+Data <- df_samsung
+
+#Data <-  readxl::read_xlsx("~/Desktop/GraduateSchool/S3/Grow Irish/data/Plex_6_Month_Data.xlsx", sheet = 1)
+#Data <- as.data.frame(Data)
+```
+
+Data Cleaning
+```{r}
+
+summary(Data)
+str(Data)
+
+
+Data$Date <- as.Date(Data$Date, format = "%m/%d/%Y")
+Data$`Start Time` <- as.POSIXct(Data$`Start Time`, format = "%m/%d/%Y %H:%M:%S")
+Data$`End Time` <- as.POSIXct(Data$`End Time`, format = "%m/%d/%Y %H:%M:%S")
+
+
+Data$`Episode Title` <- as.factor(Data$`Episode Title`)
+Data$`Episode Number` <- as.factor(Data$`Episode Number`)
+
+head(Data)
+
+```
+```{r}
+Data <- as.data.frame(Data)
+Data$Series <- as.factor(Data$Series)
+unique_series <- unique(Data$Series)
+
+num_unique_series <- length(unique_series)
+```
+```{r}
+
+# Remove the specified columns from the dataset
+Data <- subset(Data, select = -c(Date, `Start Time`, `End Time`))
+
+# Print the modified dataset
+print(Data)
+
+Data_aggregated_byseries <- Data %>%
+  group_by(Series) %>%
+  summarise(
+    HOV = sum(HOV),
+    `Total Sessions` = mean(`Total Sessions`),
+    `MOV per Session` = mean(`MOV per Session`),
+     `Duration (minutes)` = sum( `Duration (minutes)`),
+    `Unique Viewers` = sum(`Unique Viewers`),
+    Completions = sum(Completions),
+    Impressions = sum(Impressions),
+    `CC Render Rate` = mean(`CC Render Rate`),
+    `Channel AdPool Revenue` = sum(`Channel AdPool Revenue`)
+  )
+
+Data_aggregated_byseries <- as.data.frame(Data_aggregated_byseries)
+```
+
+```{r}
+library(ggplot2)
+
+top_20_series <- Data_aggregated_byseries %>%
+  arrange(desc(Impressions)) %>%
+  head(20)
+
+top_20_series <- top_20_series[order(-top_20_series$Impressions),]
+
+# Create a new column for the rank of impressions
+top_20_series$Impression_Rank <- seq_len(nrow(top_20_series))
+
+# Plot the rank plot
+ggplot(top_20_series, aes(x = Impression_Rank, y = Impressions)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  scale_x_continuous(breaks = top_20_series$Impression_Rank,
+                     labels = top_20_series$Series) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  theme_minimal() +
+  labs(x = "Series", y = "Impressions", title = "Rank Plot of Impressions by Series")
+
+```
+```{r}
+
+top_20_series <- Data_aggregated_byseries %>%
+  arrange(desc(HOV)) %>%
+  head(20)
+# Arrange the data by HOV in descending order
+top_20_series <- top_20_series[order(-top_20_series$HOV),]
+
+# Create a new column for the rank of HOV
+top_20_series$HOV_Rank <- seq_len(nrow(top_20_series))
+
+# Plot the rank plot for HOV
+ggplot(top_20_series, aes(x = HOV_Rank, y = HOV)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  scale_x_continuous(breaks = top_20_series$HOV_Rank,
+                     labels = top_20_series$Series) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  theme_minimal() +
+  labs(x = "Series", y = "HOV (Hours of Viewership)", title = "Rank Plot of HOV by Series")
+
+```
+```{r}
+
+top_20_series <- Data_aggregated_byseries %>%
+  arrange(desc(`Unique Viewers`)) %>%
+  head(20)
+# Arrange the data by Unique Viewers in descending order
+top_20_series <- top_20_series[order(-top_20_series$`Unique Viewers`),]
+
+# Create a new column for the rank of Unique Viewers
+top_20_series$Unique_Viewers_Rank <- seq_len(nrow(top_20_series))
+
+# Plot the rank plot for Unique Viewers
+ggplot(top_20_series, aes(x = Unique_Viewers_Rank, y = `Unique Viewers`)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  scale_x_continuous(breaks = top_20_series$Unique_Viewers_Rank,
+                     labels = top_20_series$Series) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  theme_minimal() +
+  labs(x = "Series", y = "Unique Viewers", title = "Rank Plot of Unique Viewers by Series")+
+  theme_minimal()
+
+```
+
+
+```{r}
+# Top 5 shows based on impressions
+top_5_impressions <- head(Data_aggregated_byseries[order(-Data_aggregated_byseries$Impressions), ], 5)
+
+# Top 5 shows based on HOV
+top_5_hov <- head(Data_aggregated_byseries[order(-Data_aggregated_byseries$HOV), ], 5)
+
+# Top 5 shows based on unique viewers
+top_5_unique_viewers <- head(Data_aggregated_byseries[order(-Data_aggregated_byseries$`Unique Viewers`), ], 5)
+
+# Print top 5 shows based on impressions
+cat("Top 5 shows based on Impressions:\n")
+print(top_5_impressions)
+
+# Print top 5 shows based on HOV
+cat("\nTop 5 shows based on HOV:\n")
+print(top_5_hov)
+
+# Print top 5 shows based on unique viewers
+cat("\nTop 5 shows based on Unique Viewers:\n")
+print(top_5_unique_viewers)
+
+
+```
+
+### Part 1
+
+Aggregations:
+```{r}
+viewers_duration <- Data %>% 
+  group_by(`Duration (minutes)`) %>% 
+  summarise(AverageUniqueViewers = mean(`Unique Viewers`))
+
+Impressions_duration <- Data %>% 
+  group_by(`Duration (minutes)`) %>% 
+  summarise(AverageImpressions = mean(Impressions))
+
+Completions_duration <- Data %>% 
+  group_by(`Duration (minutes)`) %>% 
+  summarise(AverageCompletions = mean(`Completion %`))
+
+Revenue_duration <- Data %>% 
+  group_by(`Duration (minutes)`) %>% 
+  summarise(AverageRevenue = mean(`Channel AdPool Revenue`))
+
+MOV_duration <- Data %>% 
+  group_by(`Duration (minutes)`) %>% 
+  summarise(AverageMOV = mean(`MOV per Session`))
+
+#Plots
+
+plot(Revenue_duration$`Duration (minutes)`, Revenue_duration$AverageRevenue)
+
+# Joining all results into one main dataframe
+
+summary_df <- cbind(viewers_duration,Impressions_duration ,Completions_duration , Revenue_duration, MOV_duration )
+
+summary_df <- summary_df[ , - c(3,5,7,9)]
+
+summary_df %>%
+  arrange(desc(AverageUniqueViewers))
+```
+
+
+
+### Part 2
+
+Prophet forecast
+Prep:
+```{r}
+
+Data_aggregated <- Data %>%
+  group_by(Date) %>%
+  summarise(
+    HOV = sum(HOV),
+    `Total Sessions` = mean(`Total Sessions`),
+    `MOV per Session` = mean(`MOV per Session`),
+     `Duration (minutes)` = sum( `Duration (minutes)`),
+    `Unique Viewers` = sum(`Unique Viewers`),
+    Completions = sum(Completions),
+    Impressions = sum(Impressions),
+    `CC Render Rate` = mean(`CC Render Rate`),
+    `Channel AdPool Revenue` = sum(`Channel AdPool Revenue`)
+  )
+
+Data_aggregated$Date <- as.Date(Data_aggregated$Date, format = "%y/%m/%d")
+
+```
+
+
+
+Viewers
+```{r}
+# Rename the Date column to 'ds' and the 'Unique Viewers' column to 'y'
+Data_aggregated_unique_viewers <- Data_aggregated %>%
+  rename(ds = Date, y = `Unique Viewers`)
+
+# Fit the prophet model for Unique Viewers
+prophet_model_unique_viewers <- prophet(Data_aggregated_unique_viewers)
+
+# Make future predictions
+future_unique_viewers <- make_future_dataframe(prophet_model_unique_viewers, periods = 41)  # Assuming 30 days forecast
+forecast_unique_viewers <- predict(prophet_model_unique_viewers, future_unique_viewers)
+
+# Plot the forecast for Unique Viewers
+plot(prophet_model_unique_viewers, forecast_unique_viewers)
+
+# Extract the forecast for the last row
+last_forecastV <- forecast_unique_viewers[nrow(forecast_unique_viewers), ]
+print(last_forecastV)
+
+```
+
+
+Impressions
+```{r}
+# Rename the Date column to 'ds' and the metric column you want to forecast to 'y'
+# Assuming you want to forecast 'Impressions'
+Data_aggregated_Impressions <- Data_aggregated %>%
+  rename(ds = Date, y = Impressions)
+
+# Fit the prophet model
+prophet_model <- prophet(Data_aggregated_Impressions)
+
+# Make future predictions
+future_Impressions <- make_future_dataframe(prophet_model, periods = 41)  # Assuming 30 days forecast
+forecast_Impressions <- predict(prophet_model, future_Impressions)
+
+# Plot the forecast
+plot(prophet_model, forecast_Impressions)
+
+# Extract the forecast for the last row
+last_forecastI <- forecast_Impressions[nrow(forecast_Impressions), ]
+print(last_forecastI)
+
+```
+
+
+
+```{r}
+
+# Rename the Date column to 'ds' and the 'Channel AdPool Revenue' column to 'y'
+Data_aggregated_adpool_revenue <- Data_aggregated %>%
+  rename(ds = Date, y = `Channel AdPool Revenue`)
+
+# Fit the prophet model for Channel AdPool Revenue
+prophet_model_adpool_revenue <- prophet(Data_aggregated_adpool_revenue)
+
+# Make future predictions
+future_adpool_revenue <- make_future_dataframe(prophet_model_adpool_revenue, periods = 41)  # Assuming 30 days forecast
+forecast_adpool_revenue <- predict(prophet_model_adpool_revenue, future_adpool_revenue)
+
+# Plot the forecast for Channel AdPool Revenue
+plot(prophet_model_adpool_revenue, forecast_adpool_revenue)
+
+# Extract the forecast for the last row
+last_forecastR <- forecast_adpool_revenue[nrow(forecast_adpool_revenue), ]
+print(last_forecastR)
+
+```
+
+```{r}
+
+# Rename the Date column to 'ds' and the 'Completions' column to 'y'
+Data_aggregated_completions <- Data_aggregated %>%
+  rename(ds = Date, y = Completions)
+
+# Fit the prophet model for Completions
+prophet_model_completions <- prophet(Data_aggregated_completions)
+
+# Make future predictions
+future_completions <- make_future_dataframe(prophet_model_completions, periods = 41)  # Assuming 30 days forecast
+forecast_completions <- predict(prophet_model_completions, future_completions)
+
+# Plot the forecast for Completions
+plot(prophet_model_completions, forecast_completions)
+
+# Extract the forecast for the last row
+last_forecastC <- forecast_completions[nrow(forecast_completions), ]
+print(last_forecastC)
+
+```
+
